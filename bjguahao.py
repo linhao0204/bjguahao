@@ -4,6 +4,7 @@
 北京市预约挂号统一平台
 """
 
+import base64
 import os
 import sys
 import re
@@ -53,7 +54,7 @@ class Config(object):
                 self.duty_code = data["dutyCode"]
                 self.patient_name = data["patientName"]
                 self.doctorName1 = data["doctorName1"]
-                self.doctorName2 = data["doctorName2"]
+                # self.doctorName2 = data["doctorName2"]
 
                 Log.info("配置加载完成")
                 Log.debug("手机号:" + str(self.mobile_no ))
@@ -76,24 +77,64 @@ class Guahao(object):
         self.dutys = ""
         self.refresh_time = ''
 
-        self.login_url = "http://www.bjguahao.gov.cn/quicklogin.htm"
-        self.send_code_url = "http://www.bjguahao.gov.cn/v/sendorder.htm"
-        self.get_doctor_url = "http://www.bjguahao.gov.cn/dpt/partduty.htm"
-        self.confirm_url = "http://www.bjguahao.gov.cn/order/confirm.htm"
-        self.patient_id_url = "http://www.bjguahao.gov.cn/order/confirm/"
-        self.department_url = "http://www.bjguahao.gov.cn/dpt/appoint/"
+        self.login_url = "http://www.114yygh.com/quicklogin.htm"
+        self.send_code_url = "http://www.114yygh.com/v/sendorder.htm"
+        self.get_doctor_url = "http://www.114yygh.com/dpt/partduty.htm"
+        self.confirm_url = "http://www.114yygh.com/order/confirm.htm"
+        self.patient_id_url = "http://www.114yygh.com/order/confirm/"
+        self.department_url = "http://www.114yygh.com/dpt/appoint/"
 
+    def is_login(self):
+        Log.info("开始检查是否已经登录")
+        hospital_id = self.config.hospital_id
+        department_id = self.config.department_id
+        duty_code = self.config.duty_code
+        duty_date = self.config.date
+
+        payload = {
+            'hospitalId': hospital_id,
+            'departmentId': department_id,
+            'dutyCode': duty_code,
+            'dutyDate': duty_date,
+            'isAjax': True
+        }
+
+        response = self.browser.post(self.get_doctor_url, data=payload)
+        try:
+            data = json.loads(response.text)
+
+            # 如果还没放号，此时是查不到医生的，状态码是4023。
+            if (data["code"] == 200 and data["msg"] == "OK") or data["code"] == 4023:
+                Log.debug("response data:" + response.text)
+                return True
+            else:
+                Log.debug("response data: HTML body")
+                return False
+        except Exception as e:
+            print(e)
+            return False
 
     def auth_login(self):
         """
         登陆
         """
-        Log.info("开始登陆")
+        try:
+            cookies_file = os.path.join(os.path.dirname(sys.argv[0]), self.config.mobile_no + ".cookies")
+            self.browser.load_cookies(cookies_file)
+            if self.is_login():
+                Log.info("cookies登录成功")
+                return True
+        except Exception as e:
+            print(e)
+            pass
+
+        Log.info("cookies登录失败")
+        Log.info("开始使用账号密码登陆")
         password = self.config.password
         mobile_no = self.config.mobile_no
         preload = {
-			'mobileNo': mobile_no,
-			'password': password,
+			'mobileNo': base64.b64encode(mobile_no.encode()),
+			'password': base64.b64encode(password.encode()),
             'yzm':'',
 			'isAjax': True,
 		}
@@ -152,14 +193,14 @@ class Guahao(object):
             if doctor["doctorName"] == self.config.doctorName1 and doctor['remainAvailableNumber']:
                 Log.info(u"选中:" + str(doctor["doctorName"]))
                 return doctor
-        for doctor in self.dutys[::-1]:
-            if doctor["doctorName"] == self.config.doctorName2 and doctor['remainAvailableNumber']:
-                Log.info(u"选中:" + str(doctor["doctorName"]))
-                return doctor
         # for doctor in self.dutys[::-1]:
-        #     if doctor['remainAvailableNumber']:
+        #     if doctor["doctorName"] == self.config.doctorName2 and doctor['remainAvailableNumber']:
         #         Log.info(u"选中:" + str(doctor["doctorName"]))
         #         return doctor
+        for doctor in self.dutys[::-1]:
+            if doctor['remainAvailableNumber']:
+                Log.info(u"选中:" + str(doctor["doctorName"]))
+                return doctor
         return "NoDuty"
 
     def print_doctor(self):
@@ -226,7 +267,9 @@ class Guahao(object):
         addr = self.gen_doctor_url(doctor)
         response = self.browser.get(addr, "")
         ret = response.text
-        m = re.search(u'<input type=\\"radio\\" name=\\"hzr\\" value=\\"(?P<patientId>\d+)\\"[^>]*> ' + self.config.patient_name, ret)
+        m = re.search(
+            u'name="(?P<patientId>\d+)"><div class="imgShow"></div><div class="infoRight"><span class="name">' + self.config.patient_name, ret)
+
         if m == None:
             exit("获取患者id失败")
         else:
@@ -247,6 +290,7 @@ class Guahao(object):
 
         # 放号时间
         m = re.search(u'<span>更新时间：</span>每日(?P<refreshTime>\d{1,2}:\d{2})更新', ret)
+
         refresh_time = m.group('refreshTime')
         # 放号日期
         m = re.search(u'<span>预约周期：</span>(?P<appointDay>\d+)<script.*',ret)
@@ -300,6 +344,7 @@ class Guahao(object):
             if sleep_time > 0:
                 Log.info("程序休眠" + str(sleep_time) + "秒后开始运行")
                 time.sleep(sleep_time)
+                # time.sleep(1)
             # 自动重新登录
             self.auth_login()
 
